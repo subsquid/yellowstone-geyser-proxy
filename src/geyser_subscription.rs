@@ -1,22 +1,19 @@
 use crate::auth_interceptor::AuthInterceptor;
 use crate::geyser::api::geyser_client::GeyserClient;
 use crate::geyser::api::subscribe_update::UpdateOneof;
-use crate::geyser::api::{CommitmentLevel, SubscribeRequest, SubscribeRequestFilterBlocks, SubscribeUpdate, SubscribeUpdateBlock, SubscribeUpdateTransactionInfo};
-use crate::json_builder::{safe_prop, JsonBuilder};
-use anyhow::anyhow;
+use crate::geyser::api::{CommitmentLevel, SubscribeRequest, SubscribeRequestFilterBlocks, SubscribeUpdate};
+use crate::mapping;
 use futures::future::BoxFuture;
 use futures::FutureExt;
 use std::collections::HashMap;
-use std::ops::Add;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::select;
 use tokio::time::Instant;
-use tonic::codegen::InterceptedService;
+use tonic::codegen::{CompressionEncoding, InterceptedService};
 use tonic::transport::Channel;
 use tonic::{Status, Streaming};
 use tracing::{error, info, instrument, Instrument};
-use crate::geyser::solana::storage::confirmed_block::TokenBalance;
 
 
 pub type BlockJson = Arc<str>;
@@ -34,7 +31,9 @@ pub struct GeyserSubscription {
 
 impl GeyserSubscription {
     pub async fn start(channel: Channel, auth: AuthInterceptor) -> anyhow::Result<Self> {
-        let mut client = GeyserClient::with_interceptor(channel, auth);
+        let mut client = GeyserClient::with_interceptor(channel, auth)
+            .max_decoding_message_size(32 * 1024 * 1024)
+            .accept_compressed(CompressionEncoding::Zstd);
 
         let updates = subscribe(&mut client).await?;
 
@@ -73,7 +72,7 @@ async fn control_loop(
 
     let mut state = State::WillPauseSoon(
         run_subscription(client.clone(), Some(updates), tx.clone()).boxed(),
-        Instant::now().add(Duration::from_secs(30))
+        Instant::now() + Duration::from_secs(30)
     );
 
     loop {
@@ -86,7 +85,7 @@ async fn control_loop(
                         if tx.receiver_count() == 0 {
                             state = State::WillPauseSoon(
                                 sub,
-                                Instant::now().add(Duration::from_secs(10))
+                                Instant::now() + Duration::from_secs(10)
                             )
                         } else {
                             state = State::Running(sub)
@@ -216,225 +215,16 @@ async fn receive_updates(
 
                 info!(slot = block.slot, delay_ms = delay, "new block");
 
-                match render_block(&block) {
+                match mapping::render_block(&block) {
                     Ok(json) => {
-                        // info!("{}", json);
                         let _ = tx.send(json.into());
                     },
-                    Err(_) => {
-
+                    Err(err) => {
+                        error!(slot = block.slot, error =? err, "invalid block");
                     }
                 }
             }
         }
     }
-    Ok(())
-}
-
-
-fn render_block(block: &SubscribeUpdateBlock) -> anyhow::Result<String> {
-    let mut json = JsonBuilder::new();
-    json.begin_object();
-    safe_prop!(json, "slot", json.number(block.slot));
-    safe_prop!(json, "block", {
-        json.begin_object();
-        safe_prop!(json, "blockhash", json.safe_str(&block.blockhash));
-        safe_prop!(json, "previousBlockhash", json.safe_str(&block.parent_blockhash));
-        safe_prop!(json, "parentSlot", json.number(block.parent_slot));
-        safe_prop!(json, "blockHeight", if let Some(h) = block.block_height {
-            json.number(h.block_height)
-        } else {
-            json.null();
-        });
-        safe_prop!(json, "blockTime", if let Some(h) = block.block_time {
-            json.number(h.timestamp)
-        } else {
-            json.null()
-        });
-        safe_prop!(json, "transactions", {
-            let mut order: Vec<_> = (0..block.transactions.len()).collect();
-            order.sort_by_key(|i| block.transactions[*i].index);
-            json.begin_array();
-            for i in order {
-                let tx = &block.transactions[i];
-                render_transaction(&mut json, tx)?;
-                json.comma();
-            }
-            json.end_array();
-        });
-        json.end_object();
-    });
-    json.end_object();
-    Ok(
-        json.into_string()
-    )
-}
-
-
-fn render_transaction(json: &mut JsonBuilder, tx: &SubscribeUpdateTransactionInfo) -> anyhow::Result<()> {
-    let t = tx.transaction.as_ref()
-        .ok_or_else(|| anyhow!(".transaction is missing from transaction record"))?;
-
-    let msg = t.message.as_ref()
-        .ok_or_else(|| anyhow!(".transaction.message is missing from transaction record"))?;
-
-    let hdr = msg.header.as_ref()
-        .ok_or_else(|| anyhow!(".transaction.message.header is missing from transaction record"))?;
-
-    let meta = tx.meta.as_ref()
-        .ok_or_else(|| anyhow!(".meta is missing from transaction record"))?;
-
-    json.begin_object();
-
-    safe_prop!(json, "version", if msg.versioned {
-        json.number(1);
-    } else {
-        json.safe_str("legacy");
-    });
-
-    safe_prop!(json, "transaction", {
-        json.begin_object();
-        safe_prop!(json, "message", {
-            json.begin_object();
-            safe_prop!(json, "header", {
-                json.begin_object();
-                safe_prop!(json, "numRequiredSignatures", json.number(hdr.num_required_signatures));
-                safe_prop!(json, "numReadonlySignedAccounts", json.number(hdr.num_readonly_signed_accounts));
-                safe_prop!(json, "numReadonlyUnsignedAccounts", json.number(hdr.num_readonly_unsigned_accounts));
-                json.end_object();
-            });
-            safe_prop!(json, "accountKeys", {
-                json.begin_array();
-                for acc in msg.account_keys.iter() {
-                    json.base58(acc);
-                    json.comma();
-                }
-                json.end_array();
-            });
-            safe_prop!(json, "instructions", {
-                json.begin_array();
-                for ins in msg.instructions.iter() {
-                    json.begin_object();
-                    safe_prop!(json, "programIdIndex", json.number(ins.program_id_index));
-                    safe_prop!(json, "accounts", {
-                        json.begin_array();
-                        for i in ins.accounts.iter().copied() {
-                            json.number(i);
-                            json.comma();
-                        }
-                        json.end_array();
-                    });
-                    safe_prop!(json, "data", json.base58(&ins.data));
-                    safe_prop!(json, "stackHeight", json.null());
-                    json.end_object();
-                    json.comma();
-                }
-                json.end_array();
-            });
-            safe_prop!(json, "addressTableLookups", {
-                json.begin_array();
-                for lookup in msg.address_table_lookups.iter() {
-                    json.begin_object();
-                    safe_prop!(json, "accountKey", json.base58(&lookup.account_key));
-                    safe_prop!(json, "readonlyIndexes", {
-                        json.begin_array();
-                        for idx in lookup.readonly_indexes.iter().copied() {
-                            json.number(idx);
-                            json.comma();
-                        }
-                        json.end_array();
-                    });
-                    safe_prop!(json, "writableIndexes", {
-                        json.begin_array();
-                        for idx in lookup.writable_indexes.iter().copied() {
-                            json.number(idx);
-                            json.comma();
-                        }
-                        json.end_array();
-                    });
-                    json.end_object();
-                    json.comma();
-                }
-                json.end_array();
-            });
-            safe_prop!(json, "recentBlockhash", json.base58(&msg.recent_blockhash));
-            json.end_object();
-        });
-        safe_prop!(json, "signatures", {
-            json.begin_array();
-            for sig in t.signatures.iter() {
-                json.base58(sig);
-                json.comma();
-            }
-            json.end_array();
-        });
-        json.end_object();
-    });
-
-    safe_prop!(json, "meta", {
-        json.begin_object();
-        safe_prop!(json, "computeUnitsConsumed", if let Some(units) = meta.compute_units_consumed {
-            json.number(units);
-        } else {
-            json.null();
-        });
-        safe_prop!(json, "err", if let Some(_err) = meta.err.as_ref() {
-            // FIXME: decode error
-            json.null();
-        } else {
-            json.null();
-        });
-        safe_prop!(json, "fee", json.number(meta.fee));
-        safe_prop!(json, "preBalances", {
-            json.begin_array();
-            for b in meta.pre_balances.iter().copied() {
-                json.number(b);
-                json.comma();
-            }
-            json.end_array();
-        });
-        safe_prop!(json, "postBalances", {
-            json.begin_array();
-            for b in meta.post_balances.iter().copied() {
-                json.number(b);
-                json.comma();
-            }
-            json.end_array();
-        });
-        safe_prop!(json, "preTokenBalances", render_token_balances(json, &meta.pre_token_balances)?);
-        safe_prop!(json, "postTokenBalances", render_token_balances(json, &meta.post_token_balances)?);
-        // FIXME: map rest
-        json.end_object();
-    });
-
-    json.end_object();
-    Ok(())
-}
-
-
-fn render_token_balances(json: &mut JsonBuilder, balances: &[TokenBalance]) -> anyhow::Result<()> {
-    json.begin_array();
-    for b in balances.iter() {
-        json.begin_object();
-        safe_prop!(json, "accountIndex", json.number(b.account_index));
-        safe_prop!(json, "mint", json.safe_str(&b.mint));
-        safe_prop!(json, "owner", json.safe_str(&b.owner));
-        safe_prop!(json, "programId", json.safe_str(&b.program_id));
-
-        let ui = b.ui_token_amount.as_ref()
-            .ok_or_else(|| anyhow!(".ui_token_amount is empty"))?;
-
-        safe_prop!(json, "uiTokenAmount", {
-            json.begin_object();
-            safe_prop!(json, "amount", json.safe_str(&ui.amount));
-            safe_prop!(json, "decimals", json.number(ui.decimals));
-            safe_prop!(json, "uiAmount", json.number(ui.ui_amount));
-            safe_prop!(json, "uiAmountString", json.safe_str(&ui.ui_amount_string));
-            json.end_object();
-        });
-        json.end_object();
-        json.comma();
-    }
-    json.end_array();
     Ok(())
 }

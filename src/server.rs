@@ -13,8 +13,9 @@ pub async fn run_rpc_server(sub: GeyserSubscription, port: u16) -> anyhow::Resul
     
     let config = ServerConfig::builder()
         .set_message_buffer_capacity(5)
+        .max_response_body_size(32 * 1024 * 1024)
         .build();
-    
+
     let server = Server::builder()
         .set_config(config)
         .build(("0.0.0.0", port))

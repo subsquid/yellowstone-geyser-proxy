@@ -13,6 +13,7 @@ mod geyser;
 mod geyser_subscription;
 mod json_builder;
 mod server;
+mod mapping;
 
 
 #[global_allocator]

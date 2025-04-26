@@ -5,6 +5,8 @@ edition = "2021"
 
 [dependencies]
 anyhow = "1.0.98"
+base64 = "0.22.1"
+bincode = "1.3.3"
 bs58 = "0.5.1"
 clap = { version = "4.5.37", features = ["derive"] }
 futures = "0.3.31"
@@ -13,10 +15,12 @@ lexical-core = { version = "1.0.5", default-features = false, features = ["write
 prost = "0.13.5"
 prost-types = "0.13.5"
 serde = "1.0.219"
+serde_json = "1.0.140"
+solana-transaction-error = { version = "2.2.1", features = ["serde"] }
 tikv-jemallocator = "0.6.0"
 tokio = { version = "1.44.2", features = ["full"] }
 tokio-stream = "0.1.17"
-tonic = { version = "0.13.0", features = ["tls-native-roots", "tls-ring"] }
+tonic = { version = "0.13.0", features = ["tls-native-roots", "tls-ring", "zstd"] }
 tracing = "0.1.41"
 tracing-subscriber = { version = "0.3.19", features = ["env-filter"] }
 

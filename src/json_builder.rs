@@ -1,4 +1,5 @@
 use lexical_core::ToLexical;
+use serde::{Serialize, Serializer};
 
 
 pub struct JsonBuilder {
@@ -24,6 +25,11 @@ impl JsonBuilder {
         self.out.extend_from_slice(s)
     }
 
+    pub fn str(&mut self, s: &str) {
+        let mut serializer = serde_json::Serializer::new(&mut self.out);
+        serializer.serialize_str(s).unwrap()
+    }
+
     pub fn safe_str(&mut self, s: &str) {
         self.out.push(b'"');
         self.out.extend_from_slice(s.as_bytes());
@@ -40,15 +46,37 @@ impl JsonBuilder {
         bs58::encode(s).onto(&mut self.out).unwrap();
         self.out.push(b'"');
     }
-    
+
+    pub fn base64(&mut self, s: impl AsRef<[u8]>) {
+        self.out.push(b'"');
+
+        let s = s.as_ref();
+        let len = self.out.len();
+
+        self.out.resize(len + s.len() * 4 / 3 + 4, 0);
+
+        use base64::Engine;
+        let written = base64::prelude::BASE64_STANDARD
+            .encode_slice(s, &mut self.out[len..])
+            .unwrap();
+
+        self.out.truncate(len + written);
+
+        self.out.push(b'"');
+    }
+
+    pub fn value(&mut self, val: &impl Serialize) {
+        serde_json::to_writer(&mut self.out, val).expect("serialization is infallible")
+    }
+
     pub fn null(&mut self) {
         self.out.extend_from_slice(b"null")
     }
-    
+
     pub fn comma(&mut self) {
         self.out.push(b',')
     }
-    
+
     pub fn begin_object(&mut self) {
         self.out.push(b'{')
     }
