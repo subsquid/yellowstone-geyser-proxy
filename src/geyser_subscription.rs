@@ -6,6 +6,7 @@ use crate::mapping;
 use futures::future::BoxFuture;
 use futures::FutureExt;
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, LazyLock};
 use std::time::Duration;
 use tokio::select;
@@ -241,10 +242,16 @@ async fn receive_updates(
 }
 
 
+pub static MAPPING_THREADS: AtomicUsize = AtomicUsize::new(0);
+
+
 static MAPPING_POOL: LazyLock<rayon::ThreadPool> = LazyLock::new(|| {
-    let threads = std::thread::available_parallelism()
-        .map(|n| std::cmp::min(n.get(), 4))
-        .unwrap_or(4);
+    let mut threads = MAPPING_THREADS.load(Ordering::SeqCst);
+    if threads == 0 {
+        threads = std::thread::available_parallelism()
+            .map(|n| std::cmp::min(n.get(), 4))
+            .unwrap_or(4);
+    }
     info!("will use {} thread(s) for mapping", threads);
     rayon::ThreadPoolBuilder::new()
         .num_threads(threads)

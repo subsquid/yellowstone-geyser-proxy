@@ -4,6 +4,7 @@ use crate::geyser_subscription::GeyserSubscription;
 use crate::server::run_rpc_server;
 use anyhow::Context;
 use clap::Parser;
+use std::sync::atomic::Ordering;
 use tonic::transport::{ClientTlsConfig, Endpoint};
 
 
@@ -32,6 +33,10 @@ fn main() -> anyhow::Result<()> {
         .with_env_filter(env_filter)
         .compact()
         .init();
+
+    if let Some(threads) = args.mapping_threads {
+        geyser_subscription::MAPPING_THREADS.store(threads, Ordering::SeqCst);
+    }
 
     tokio::runtime::Builder::new_multi_thread()
         .enable_all()

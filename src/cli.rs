@@ -12,5 +12,7 @@ pub struct CLI {
     #[arg(long, value_name = "TOKEN")]
     pub geyser_x_access_token: Option<AsciiMetadataValue>,
     #[arg(long, default_value = "3000")]
-    pub port: u16
+    pub port: u16,
+    #[arg(long, value_name = "N")]
+    pub mapping_threads: Option<usize>
 }
