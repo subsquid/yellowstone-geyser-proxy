@@ -242,12 +242,12 @@ async fn receive_updates(
 
 
 static MAPPING_POOL: LazyLock<rayon::ThreadPool> = LazyLock::new(|| {
+    let threads = std::thread::available_parallelism()
+        .map(|n| std::cmp::min(n.get(), 4))
+        .unwrap_or(4);
+    info!("will use {} thread(s) for mapping", threads);
     rayon::ThreadPoolBuilder::new()
-        .num_threads(
-            std::thread::available_parallelism()
-                .map(|n| std::cmp::min(n.get(), 4))
-                .unwrap_or(4)
-        )
+        .num_threads(threads)
         .build()
         .unwrap()
 });
