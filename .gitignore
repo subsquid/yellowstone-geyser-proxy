@@ -1,4 +1,6 @@
 /.idea
 /Makefile
 /target
+*.temp.*
+*.temp
 

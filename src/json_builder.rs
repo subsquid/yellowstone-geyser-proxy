@@ -68,6 +68,10 @@ impl JsonBuilder {
     pub fn value(&mut self, val: &impl Serialize) {
         serde_json::to_writer(&mut self.out, val).expect("serialization is infallible")
     }
+    
+    pub fn raw(&mut self, json: &str) {
+        self.out.extend_from_slice(json.as_bytes())
+    }
 
     pub fn null(&mut self) {
         self.out.extend_from_slice(b"null")

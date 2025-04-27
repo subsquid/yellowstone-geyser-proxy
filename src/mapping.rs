@@ -26,12 +26,21 @@ pub fn render_block(block: &SubscribeUpdateBlock) -> anyhow::Result<String> {
             json.null()
         });
         safe_prop!(json, "transactions", {
+            use rayon::prelude::*;
+
             let mut order: Vec<_> = (0..block.transactions.len()).collect();
             order.sort_by_key(|i| block.transactions[*i].index);
-            json.begin_array();
-            for i in order {
+
+            let transactions = order.par_iter().map(|&i| {
                 let tx = &block.transactions[i];
+                let mut json = JsonBuilder::new();
                 render_transaction(&mut json, tx)?;
+                Ok(json.into_string())
+            }).collect::<anyhow::Result<Vec<_>>>()?;
+
+            json.begin_array();
+            for tx in transactions {
+                json.raw(&tx);
                 json.comma();
             }
             json.end_array();
@@ -123,9 +132,9 @@ fn render_transaction(json: &mut JsonBuilder, tx: &SubscribeUpdateTransactionInf
         safe_prop!(json, "err", if let Some(err) = meta.err.as_ref() {
             let err: TransactionError = bincode::deserialize(&err.err).with_context(|| {
                 anyhow!(
-                    "failed to deserialize error of transaction {}", 
+                    "failed to deserialize error of transaction {}",
                     bs58::encode(&t.signatures[0]).into_string()
-                )        
+                )
             })?;
             json.value(&err);
         } else {

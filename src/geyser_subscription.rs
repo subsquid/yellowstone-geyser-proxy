@@ -6,7 +6,7 @@ use crate::mapping;
 use futures::future::BoxFuture;
 use futures::FutureExt;
 use std::collections::HashMap;
-use std::sync::Arc;
+use std::sync::{Arc, LazyLock};
 use std::time::Duration;
 use tokio::select;
 use tokio::time::Instant;
@@ -212,15 +212,26 @@ async fn receive_updates(
                     .as_millis();
 
                 let delay = current_time - block_time * 1000;
+                let slot = block.slot;
 
-                info!(slot = block.slot, delay_ms = delay, "new block");
+                info!(slot = slot, delay_ms = delay, "new block");
 
-                match mapping::render_block(&block) {
-                    Ok(json) => {
+                let (mapping_tx, mapping_rx) = tokio::sync::oneshot::channel();
+
+                MAPPING_POOL.spawn(move || {
+                    let result = mapping::render_block(&block);
+                    let _ = mapping_tx.send(result);
+                });
+
+                match mapping_rx.await {
+                    Ok(Ok(json)) => {
                         let _ = tx.send(json.into());
                     },
+                    Ok(Err(err)) => {
+                        error!(slot = slot, error =? err, "invalid block");
+                    },
                     Err(err) => {
-                        error!(slot = block.slot, error =? err, "invalid block");
+                        error!("mapping task failed - {}", err)
                     }
                 }
             }
@@ -228,3 +239,15 @@ async fn receive_updates(
     }
     Ok(())
 }
+
+
+static MAPPING_POOL: LazyLock<rayon::ThreadPool> = LazyLock::new(|| {
+    rayon::ThreadPoolBuilder::new()
+        .num_threads(
+            std::thread::available_parallelism()
+                .map(|n| std::cmp::min(n.get(), 4))
+                .unwrap_or(4)
+        )
+        .build()
+        .unwrap()
+});
