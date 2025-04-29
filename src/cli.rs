@@ -11,6 +11,8 @@ pub struct CLI {
     pub geyser_x_token: Option<AsciiMetadataValue>,
     #[arg(long, value_name = "TOKEN")]
     pub geyser_x_access_token: Option<AsciiMetadataValue>,
+    #[arg(long)]
+    pub with_votes: bool,
     #[arg(long, default_value = "3000")]
     pub port: u16,
     #[arg(long, value_name = "N")]

@@ -31,7 +31,7 @@ pub struct GeyserSubscription {
 
 
 impl GeyserSubscription {
-    pub async fn start(channel: Channel, auth: AuthInterceptor) -> anyhow::Result<Self> {
+    pub async fn start(channel: Channel, auth: AuthInterceptor, with_votes: bool) -> anyhow::Result<Self> {
         let mut client = GeyserClient::with_interceptor(channel, auth)
             .max_decoding_message_size(32 * 1024 * 1024)
             .accept_compressed(CompressionEncoding::Zstd);
@@ -42,7 +42,7 @@ impl GeyserSubscription {
         let (subscribed_tx, subscribed_rx) = tokio::sync::watch::channel(());
 
         tokio::spawn(
-            control_loop(client, updates, subscribed_rx, tx.clone()).in_current_span()
+            control_loop(client, updates, subscribed_rx, tx.clone(), with_votes).in_current_span()
         );
 
         Ok(Self {
@@ -63,7 +63,8 @@ async fn control_loop(
     client: Client,
     updates: Streaming<SubscribeUpdate>,
     mut subscribed_rx: tokio::sync::watch::Receiver<()>,
-    tx: tokio::sync::broadcast::Sender<BlockJson>
+    tx: tokio::sync::broadcast::Sender<BlockJson>,
+    with_votes: bool
 ) {
     enum State {
         Running(BoxFuture<'static, ()>),
@@ -72,7 +73,7 @@ async fn control_loop(
     }
 
     let mut state = State::WillPauseSoon(
-        run_subscription(client.clone(), Some(updates), tx.clone()).boxed(),
+        run_subscription(client.clone(), Some(updates), tx.clone(), with_votes).boxed(),
         Instant::now() + Duration::from_secs(30)
     );
 
@@ -123,7 +124,7 @@ async fn control_loop(
                 match subscribed_rx.changed().await {
                     Ok(_) => {
                         state = State::Running(
-                            run_subscription(client.clone(), None, tx.clone()).boxed()
+                            run_subscription(client.clone(), None, tx.clone(), with_votes).boxed()
                         )
                     },
                     Err(_) => {
@@ -141,7 +142,8 @@ async fn control_loop(
 async fn run_subscription(
     mut client: Client,
     mut updates: Option<Streaming<SubscribeUpdate>>,
-    mut tx: tokio::sync::broadcast::Sender<BlockJson>
+    mut tx: tokio::sync::broadcast::Sender<BlockJson>,
+    with_votes: bool
 ) {
     let mut errors = 0;
     let backoff_ms = [0, 0, 200, 500, 1000, 2000, 5000];
@@ -164,7 +166,7 @@ async fn run_subscription(
             }
         };
         info!("subscribed");
-        match receive_updates(updates, &mut tx, &mut errors).await {
+        match receive_updates(updates, &mut tx, &mut errors, with_votes).await {
             Ok(_) => error!("unexpected end of update stream"),
             Err(status) => error!(grpc_status =? status, "subscription error"),
         }
@@ -194,7 +196,8 @@ async fn subscribe(client: &mut Client) -> Result<Streaming<SubscribeUpdate>, St
 async fn receive_updates(
     mut updates: Streaming<SubscribeUpdate>,
     tx: &mut tokio::sync::broadcast::Sender<BlockJson>,
-    errors: &mut usize
+    errors: &mut usize,
+    with_votes: bool
 ) -> Result<(), Status>
 {
     while let Some(upd) = updates.message().await? {
@@ -220,7 +223,7 @@ async fn receive_updates(
                 let (mapping_tx, mapping_rx) = tokio::sync::oneshot::channel();
 
                 MAPPING_POOL.spawn(move || {
-                    let result = mapping::render_block(&block);
+                    let result = mapping::render_block(&block, with_votes);
                     let _ = mapping_tx.send(result);
                 });
 

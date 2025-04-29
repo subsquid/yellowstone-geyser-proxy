@@ -54,7 +54,7 @@ fn main() -> anyhow::Result<()> {
                 x_access_token: args.geyser_x_access_token
             };
 
-            let sub = GeyserSubscription::start(channel, auth)
+            let sub = GeyserSubscription::start(channel, auth, args.with_votes)
                 .await
                 .context("failed to subscribe to block updates")?;
 

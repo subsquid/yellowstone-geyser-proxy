@@ -24,6 +24,12 @@ impl JsonBuilder {
         let s = lexical_core::write(num, &mut self.buf);
         self.out.extend_from_slice(s)
     }
+    
+    pub fn number_str<T: ToLexical>(&mut self, num: T) {
+        self.out.push(b'"');
+        self.number(num);
+        self.out.push(b'"')
+    }
 
     pub fn str(&mut self, s: &str) {
         let mut serializer = serde_json::Serializer::new(&mut self.out);

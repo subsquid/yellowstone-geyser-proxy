@@ -6,7 +6,7 @@ use lexical_core::ToLexical;
 use solana_transaction_error::TransactionError;
 
 
-pub fn render_block(block: &SubscribeUpdateBlock) -> anyhow::Result<String> {
+pub fn render_block(block: &SubscribeUpdateBlock, with_votes: bool) -> anyhow::Result<String> {
     let mut json = JsonBuilder::new();
     json.begin_object();
     safe_prop!(json, "slot", json.number(block.slot));
@@ -31,12 +31,15 @@ pub fn render_block(block: &SubscribeUpdateBlock) -> anyhow::Result<String> {
             let mut order: Vec<_> = (0..block.transactions.len()).collect();
             order.sort_by_key(|i| block.transactions[*i].index);
 
-            let transactions = order.par_iter().map(|&i| {
-                let tx = &block.transactions[i];
-                let mut json = JsonBuilder::new();
-                render_transaction(&mut json, tx)?;
-                Ok(json.into_string())
-            }).collect::<anyhow::Result<Vec<_>>>()?;
+            let transactions = order.into_par_iter()
+                .filter(|i| with_votes || !block.transactions[*i].is_vote)
+                .map(|i| {
+                    let tx = &block.transactions[i];
+                    let mut json = JsonBuilder::new();
+                    render_transaction(&mut json, tx)?;
+                    Ok(json.into_string())
+                })
+                .collect::<anyhow::Result<Vec<_>>>()?;
 
             json.begin_array();
             for tx in transactions {
@@ -71,6 +74,8 @@ fn render_transaction(json: &mut JsonBuilder, tx: &SubscribeUpdateTransactionInf
         .ok_or_else(|| anyhow!(".meta is missing from transaction record"))?;
 
     json.begin_object();
+    
+    safe_prop!(json, "_index", json.number(tx.index));
 
     safe_prop!(json, "version", if msg.versioned {
         json.number(1);
@@ -125,7 +130,7 @@ fn render_transaction(json: &mut JsonBuilder, tx: &SubscribeUpdateTransactionInf
     safe_prop!(json, "meta", {
         json.begin_object();
         safe_prop!(json, "computeUnitsConsumed", if let Some(units) = meta.compute_units_consumed {
-            json.number(units);
+            json.number_str(units);
         } else {
             json.null();
         });
@@ -140,9 +145,9 @@ fn render_transaction(json: &mut JsonBuilder, tx: &SubscribeUpdateTransactionInf
         } else {
             json.null();
         });
-        safe_prop!(json, "fee", json.number(meta.fee));
-        safe_prop!(json, "preBalances", render_number_list(json, &meta.pre_balances));
-        safe_prop!(json, "postBalances", render_number_list(json, &meta.post_balances));
+        safe_prop!(json, "fee", json.number_str(meta.fee));
+        safe_prop!(json, "preBalances", render_number_str_list(json, &meta.pre_balances));
+        safe_prop!(json, "postBalances", render_number_str_list(json, &meta.post_balances));
         safe_prop!(json, "preTokenBalances", render_token_balances(json, &meta.pre_token_balances)?);
         safe_prop!(json, "postTokenBalances", render_token_balances(json, &meta.post_token_balances)?);
         safe_prop!(json, "innerInstructions", {
@@ -233,6 +238,16 @@ fn render_number_list<T: ToLexical>(json: &mut JsonBuilder, list: &[T]) {
 }
 
 
+fn render_number_str_list<T: ToLexical>(json: &mut JsonBuilder, list: &[T]) {
+    json.begin_array();
+    for i in list.iter().copied() {
+        json.number_str(i);
+        json.comma();
+    }
+    json.end_array()
+}
+
+
 fn render_token_balances(json: &mut JsonBuilder, balances: &[TokenBalance]) -> anyhow::Result<()> {
     json.begin_array();
     for b in balances.iter() {
@@ -266,8 +281,8 @@ fn render_rewards(json: &mut JsonBuilder, rewards: &[Reward]) -> anyhow::Result<
     for reward in rewards.iter() {
         json.begin_object();
         safe_prop!(json, "pubkey", json.safe_str(&reward.pubkey));
-        safe_prop!(json, "lamports", json.number(reward.lamports));
-        safe_prop!(json, "postBalance", json.number(reward.post_balance));
+        safe_prop!(json, "lamports", json.number_str(reward.lamports));
+        safe_prop!(json, "postBalance", json.number_str(reward.post_balance));
         safe_prop!(json, "rewardType", {
             match reward.reward_type {
                 0 => json.safe_str("Unspecified"),
