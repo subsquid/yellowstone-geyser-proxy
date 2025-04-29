@@ -4,6 +4,7 @@ use crate::geyser_subscription::GeyserSubscription;
 use crate::server::run_rpc_server;
 use anyhow::Context;
 use clap::Parser;
+use std::io::IsTerminal;
 use std::sync::atomic::Ordering;
 use tonic::transport::{ClientTlsConfig, Endpoint};
 
@@ -29,10 +30,18 @@ fn main() -> anyhow::Result<()> {
             .unwrap_or("info".to_string()),
     );
 
-    tracing_subscriber::fmt()
-        .with_env_filter(env_filter)
-        .compact()
-        .init();
+    if std::io::stdout().is_terminal() {
+        tracing_subscriber::fmt()
+            .with_env_filter(env_filter)
+            .compact()
+            .init();
+    } else {
+        tracing_subscriber::fmt()
+            .with_env_filter(env_filter)
+            .json()
+            .with_current_span(false)
+            .init();
+    }
 
     if let Some(threads) = args.mapping_threads {
         geyser_subscription::MAPPING_THREADS.store(threads, Ordering::SeqCst);
