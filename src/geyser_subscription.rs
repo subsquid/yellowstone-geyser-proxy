@@ -14,7 +14,7 @@ use tokio::time::Instant;
 use tonic::codegen::{CompressionEncoding, InterceptedService};
 use tonic::transport::Channel;
 use tonic::{Status, Streaming};
-use tracing::{error, info, instrument, Instrument};
+use tracing::{error, info, instrument, warn, Instrument};
 
 
 pub type BlockJson = Arc<str>;
@@ -167,7 +167,7 @@ async fn run_subscription(
         };
         info!("subscribed");
         match receive_updates(updates, &mut tx, &mut errors, with_votes).await {
-            Ok(_) => error!("unexpected end of update stream"),
+            Ok(_) => warn!("unexpected end of update stream"),
             Err(status) => error!(grpc_status =? status, "subscription error"),
         }
         errors += 1;
