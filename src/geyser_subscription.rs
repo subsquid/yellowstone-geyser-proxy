@@ -215,10 +215,10 @@ async fn receive_updates(
                     .expect("system time is below unix epoch")
                     .as_millis();
 
-                let delay = current_time - block_time * 1000;
+                let block_age = current_time - block_time * 1000;
                 let slot = block.slot;
 
-                info!(slot = slot, delay_ms = delay as u64, "new block");
+                info!(slot = slot, block_age = block_age as u64, "new block");
 
                 let (mapping_tx, mapping_rx) = tokio::sync::oneshot::channel();
 
