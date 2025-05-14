@@ -40,5 +40,4 @@ Options:
       --with-votes                     disable removal of vote transactions
       --port <PORT>                    [default: 3000]
       --mapping-threads <N>            number of threads to use for data transformation
-
 ```
