@@ -236,7 +236,7 @@ async fn receive_updates(
                 let block_age = current_time - block_time * 1000;
                 let slot = block.slot;
 
-                info!(slot = slot, block_age = block_age as u64, "new block");
+                info!(slot = slot, block_age = block_age as u64, "block received");
 
                 let (mapping_tx, mapping_rx) = tokio::sync::oneshot::channel();
 
