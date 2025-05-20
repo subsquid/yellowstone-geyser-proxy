@@ -16,7 +16,7 @@ use tokio::time::Instant;
 use tonic::codegen::{CompressionEncoding, InterceptedService};
 use tonic::transport::Channel;
 use tonic::{Status, Streaming};
-use tracing::{error, info, instrument, warn, Instrument};
+use tracing::{debug, error, info, instrument, warn, Instrument};
 
 
 #[derive(Debug, Clone)]
@@ -251,6 +251,7 @@ async fn receive_updates(
                             slot,
                             json: json.into()
                         });
+                        debug!(slot = slot, "block published");
                     },
                     Ok(Err(err)) => {
                         error!(slot = slot, error =? err, "invalid block");
