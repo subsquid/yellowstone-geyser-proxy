@@ -101,7 +101,7 @@ fn build_rpc_module(sub: GeyserSubscription) -> RpcModule<GeyserSubscription> {
                                     }
                                     debug!(
                                         slot = block.slot,
-                                        send_time = send_start.map(|t| t.elapsed().as_millis()).unwrap_or_default()
+                                        send_time = send_start.map(|t| t.elapsed().as_millis()).unwrap_or_default(),
                                         "block sent"
                                     );
                                 },
