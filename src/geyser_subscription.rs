@@ -5,6 +5,8 @@ use crate::geyser::api::{CommitmentLevel, SubscribeRequest, SubscribeRequestFilt
 use crate::mapping;
 use futures::future::BoxFuture;
 use futures::FutureExt;
+use serde::ser::SerializeStruct;
+use serde::{Serialize, Serializer};
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, LazyLock};
@@ -17,7 +19,23 @@ use tonic::{Status, Streaming};
 use tracing::{error, info, instrument, warn, Instrument};
 
 
-pub type BlockJson = Arc<str>;
+#[derive(Debug, Clone)]
+pub struct JsonBlock {
+    pub slot: u64,
+    pub json: Arc<str>
+}
+
+
+impl Serialize for JsonBlock {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        let mut s = serializer.serialize_struct("$serde_json::private::RawValue", 1)?;
+        s.serialize_field("$serde_json::private::RawValue", self.json.as_ref())?;
+        s.end()
+    }
+}
 
 
 type Client = GeyserClient<InterceptedService<Channel, AuthInterceptor>>;
@@ -25,7 +43,7 @@ type Client = GeyserClient<InterceptedService<Channel, AuthInterceptor>>;
 
 #[derive(Clone)]
 pub struct GeyserSubscription {
-    tx: tokio::sync::broadcast::Sender<BlockJson>,
+    tx: tokio::sync::broadcast::Sender<JsonBlock>,
     subscribed: tokio::sync::watch::Sender<()>,
 }
 
@@ -51,7 +69,7 @@ impl GeyserSubscription {
         })
     }
 
-    pub fn subscribe(&self) -> tokio::sync::broadcast::Receiver<BlockJson> {
+    pub fn subscribe(&self) -> tokio::sync::broadcast::Receiver<JsonBlock> {
         self.subscribed.send(()).expect("receive end must be alive");
         self.tx.subscribe()
     }
@@ -63,7 +81,7 @@ async fn control_loop(
     client: Client,
     updates: Streaming<SubscribeUpdate>,
     mut subscribed_rx: tokio::sync::watch::Receiver<()>,
-    tx: tokio::sync::broadcast::Sender<BlockJson>,
+    tx: tokio::sync::broadcast::Sender<JsonBlock>,
     with_votes: bool
 ) {
     enum State {
@@ -142,7 +160,7 @@ async fn control_loop(
 async fn run_subscription(
     mut client: Client,
     mut updates: Option<Streaming<SubscribeUpdate>>,
-    mut tx: tokio::sync::broadcast::Sender<BlockJson>,
+    mut tx: tokio::sync::broadcast::Sender<JsonBlock>,
     with_votes: bool
 ) {
     let mut errors = 0;
@@ -195,7 +213,7 @@ async fn subscribe(client: &mut Client) -> Result<Streaming<SubscribeUpdate>, St
 
 async fn receive_updates(
     mut updates: Streaming<SubscribeUpdate>,
-    tx: &mut tokio::sync::broadcast::Sender<BlockJson>,
+    tx: &mut tokio::sync::broadcast::Sender<JsonBlock>,
     errors: &mut usize,
     with_votes: bool
 ) -> Result<(), Status>
@@ -229,7 +247,10 @@ async fn receive_updates(
 
                 match mapping_rx.await {
                     Ok(Ok(json)) => {
-                        let _ = tx.send(json.into());
+                        let _ = tx.send(JsonBlock {
+                            slot,
+                            json: json.into()
+                        });
                     },
                     Ok(Err(err)) => {
                         error!(slot = slot, error =? err, "invalid block");

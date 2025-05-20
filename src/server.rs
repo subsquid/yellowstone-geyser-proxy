@@ -1,11 +1,9 @@
 use crate::geyser_subscription::GeyserSubscription;
 use jsonrpsee::server::{Server, ServerConfig};
 use jsonrpsee::{RpcModule, SubscriptionMessage};
-use serde::ser::SerializeStruct;
-use serde::{Serialize, Serializer};
-use tokio::signal;
 use tokio::sync::broadcast::error::RecvError;
-use tracing::info;
+use tokio::{select, signal};
+use tracing::{debug, debug_span, error, info, Instrument};
 
 
 pub async fn run_rpc_server(sub: GeyserSubscription, port: u16) -> anyhow::Result<()> {
@@ -53,7 +51,7 @@ async fn shutdown_signal() {
     #[cfg(not(unix))]
     let terminate = std::future::pending::<()>();
 
-    tokio::select! {
+    select! {
         _ = ctrl_c => {},
         _ = terminate => {},
     }
@@ -67,62 +65,59 @@ fn build_rpc_module(sub: GeyserSubscription) -> RpcModule<GeyserSubscription> {
         "geyser_blockNotification",
         "geyser_blockUnsubscribe",
         |_, pending, ctx, _| {
+            let span = debug_span!("block_subscription", connection_id = pending.connection_id().0);
             tokio::spawn(async move {
                 let sink = match pending.accept().await {
                     Ok(sink) => sink,
                     Err(_) => {
+                        debug!("closed before acceptance");
                         return
                     }
                 };
+                debug!("accepted");
                 let mut rx = ctx.subscribe();
                 loop {
-                    match rx.recv().await {
-                        Ok(block) => {
-                            let msg = SubscriptionMessage::new(
-                                sink.method_name(),
-                                sink.subscription_id(),
-                                &RawJson::new(&block)
-                            ).expect(
-                                "serialization is infallible"
-                            );
-                            if sink.send(msg).await.is_err() {
-                                return 
+                    select! {
+                        biased;
+                        _ = sink.closed() => debug!("closed"),
+                        event = rx.recv() => {
+                            match event {
+                                Ok(block) => {
+                                    let msg = SubscriptionMessage::new(
+                                        sink.method_name(),
+                                        sink.subscription_id(),
+                                        &block
+                                    ).expect(
+                                        "serialization is infallible"
+                                    );
+                                    if sink.send(msg).await.is_err() {
+                                        debug!("closed");
+                                        return 
+                                    }
+                                    debug!(slot = block.slot, "block sent");
+                                },
+                                Err(RecvError::Lagged(skipped)) => {
+                                    debug!(skipped = skipped, "lagging behind");
+                                    continue
+                                },
+                                Err(RecvError::Closed) => {
+                                    error!("geyser termination");
+                                    let eof = SubscriptionMessage::new(
+                                        sink.method_name(),
+                                        sink.subscription_id(),
+                                        &serde_json::value::Value::Null
+                                    ).expect(
+                                        "serialization is infallible"
+                                    );
+                                    let _ = sink.send(eof).await;
+                                    return
+                                }
                             }
-                        },
-                        Err(RecvError::Lagged(_)) => {
-                            continue
-                        },
-                        Err(RecvError::Closed) => {
-                            return
                         }
                     }
                 }
-            });
+            }.instrument(span));
         }
     ).unwrap();
     rpc
-}
-
-
-struct RawJson<'a> {
-    json: &'a str
-}
-
-
-impl<'a> RawJson<'a> {
-    pub fn new(json: &'a str) -> Self {
-        Self { json }
-    }
-}
-
-
-impl<'a> Serialize for RawJson<'a> {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: Serializer,
-    {
-        let mut s = serializer.serialize_struct("$serde_json::private::RawValue", 1)?;
-        s.serialize_field("$serde_json::private::RawValue", &self.json)?;
-        s.end()
-    }
 }
