@@ -79,7 +79,10 @@ fn build_rpc_module(sub: GeyserSubscription) -> RpcModule<GeyserSubscription> {
                 loop {
                     select! {
                         biased;
-                        _ = sink.closed() => debug!("closed"),
+                        _ = sink.closed() => {
+                            debug!("closed");
+                            return
+                        },
                         event = rx.recv() => {
                             match event {
                                 Ok(block) => {
@@ -92,7 +95,7 @@ fn build_rpc_module(sub: GeyserSubscription) -> RpcModule<GeyserSubscription> {
                                     );
                                     if sink.send(msg).await.is_err() {
                                         debug!("closed");
-                                        return 
+                                        return
                                     }
                                     debug!(slot = block.slot, "block sent");
                                 },
