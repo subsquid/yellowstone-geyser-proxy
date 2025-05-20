@@ -56,7 +56,7 @@ impl GeyserSubscription {
 
         let updates = subscribe(&mut client).await?;
 
-        let tx = tokio::sync::broadcast::Sender::new(10);
+        let tx = tokio::sync::broadcast::Sender::new(20);
         let (subscribed_tx, subscribed_rx) = tokio::sync::watch::channel(());
 
         tokio::spawn(

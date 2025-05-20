@@ -1,9 +1,10 @@
 use crate::geyser_subscription::GeyserSubscription;
 use jsonrpsee::server::{Server, ServerConfig};
 use jsonrpsee::{RpcModule, SubscriptionMessage};
+use std::time::Instant;
 use tokio::sync::broadcast::error::RecvError;
 use tokio::{select, signal};
-use tracing::{debug, debug_span, error, info, Instrument};
+use tracing::{debug, debug_span, error, event_enabled, info, Instrument, Level};
 
 
 pub async fn run_rpc_server(sub: GeyserSubscription, port: u16) -> anyhow::Result<()> {
@@ -93,11 +94,16 @@ fn build_rpc_module(sub: GeyserSubscription) -> RpcModule<GeyserSubscription> {
                                     ).expect(
                                         "serialization is infallible"
                                     );
+                                    let send_start = event_enabled!(Level::DEBUG).then(Instant::now);
                                     if sink.send(msg).await.is_err() {
                                         debug!("closed");
                                         return
                                     }
-                                    debug!(slot = block.slot, "block sent");
+                                    debug!(
+                                        slot = block.slot,
+                                        send_time = send_start.map(|t| t.elapsed().as_millis()).unwrap_or_default()
+                                        "block sent"
+                                    );
                                 },
                                 Err(RecvError::Lagged(skipped)) => {
                                     debug!(skipped = skipped, "lagging behind");
