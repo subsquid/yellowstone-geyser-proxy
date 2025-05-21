@@ -236,7 +236,7 @@ async fn receive_updates(
                 let block_age = current_time - block_time * 1000;
                 let slot = block.slot;
 
-                info!(slot = slot, block_age = block_age as u64, "block received");
+                debug!(slot = slot, block_age = block_age as u64, "block received");
 
                 let (mapping_tx, mapping_rx) = tokio::sync::oneshot::channel();
 
@@ -247,11 +247,12 @@ async fn receive_updates(
 
                 match mapping_rx.await {
                     Ok(Ok(json)) => {
+                        let size = json.len();
                         let _ = tx.send(JsonBlock {
                             slot,
                             json: json.into()
                         });
-                        debug!(slot = slot, "block published");
+                        debug!(slot = slot, byte_size = size, "block published");
                     },
                     Ok(Err(err)) => {
                         error!(slot = slot, error =? err, "invalid block");
