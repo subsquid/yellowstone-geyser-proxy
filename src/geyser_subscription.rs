@@ -13,6 +13,7 @@ use std::sync::{Arc, LazyLock};
 use std::time::Duration;
 use tokio::select;
 use tokio::time::Instant;
+use tokio_stream::StreamExt;
 use tonic::codegen::{CompressionEncoding, InterceptedService};
 use tonic::transport::Channel;
 use tonic::{Status, Streaming};
@@ -185,7 +186,7 @@ async fn run_subscription(
         };
         info!("subscribed");
         match receive_updates(updates, &mut tx, &mut errors, with_votes).await {
-            Ok(_) => warn!("unexpected end of update stream"),
+            Ok(termination_reason) => warn!(termination_reason),
             Err(status) => error!(grpc_status =? status, "subscription error"),
         }
         errors += 1;
@@ -212,15 +213,28 @@ async fn subscribe(client: &mut Client) -> Result<Streaming<SubscribeUpdate>, St
 
 
 async fn receive_updates(
-    mut updates: Streaming<SubscribeUpdate>,
+    updates: Streaming<SubscribeUpdate>,
     tx: &mut tokio::sync::broadcast::Sender<JsonBlock>,
     errors: &mut usize,
     with_votes: bool
-) -> Result<(), Status>
+) -> Result<&'static str, Status>
 {
-    while let Some(upd) = updates.message().await? {
-        if let Some(upd) = upd.update_oneof {
-            if let UpdateOneof::Block(block) = upd {
+    let mut blocks = updates.filter_map(|upd| upd.map(|upd| {
+        if let UpdateOneof::Block(block) = upd.update_oneof? {
+            Some(block)
+        } else {
+            None
+        }
+    }).transpose());
+
+    loop {
+        select! {
+            biased;
+            block_update = blocks.next() => {
+                let Some(block_result) = block_update else {
+                    return Ok("update stream terminated")
+                };
+                let block = block_result?;
                 *errors = 0;
 
                 let block_time = block
@@ -261,10 +275,12 @@ async fn receive_updates(
                         error!("mapping task failed - {}", err)
                     }
                 }
+            },
+            _ = tokio::time::sleep(Duration::from_secs(10)) => {
+                return Ok("no block was received during the last 10 seconds")
             }
         }
     }
-    Ok(())
 }
 
 
