@@ -276,8 +276,8 @@ async fn receive_updates(
                     }
                 }
             },
-            _ = tokio::time::sleep(Duration::from_secs(10)) => {
-                return Ok("no block was received during the last 10 seconds")
+            _ = tokio::time::sleep(Duration::from_secs(5)) => {
+                return Ok("no block was received during the last 5 seconds")
             }
         }
     }
